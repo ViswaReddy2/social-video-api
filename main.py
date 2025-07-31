@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException
 import yt_dlp
+import urllib.parse
 
 app = FastAPI()
 
 @app.get("/get-video-url")
 async def get_video_url(video_url: str):
+    video_url = urllib.parse.unquote(video_url)  # Decode the param here
     try:
         ydl_opts = {
             'format': 'best',  # Prefer best combined video+audio format
