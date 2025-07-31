@@ -57,6 +57,11 @@ async def get_video_url(video_url: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error extracting URL: {str(e)}")
 
+# INSERT THE ROOT ROUTE HERE (new addition)
+@app.get("/")
+async def root():
+    return {"message": "Welcome to Social Media Video API! Use /get-video-url?video_url=... to extract URLs."}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
