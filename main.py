@@ -1,12 +1,20 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 import yt_dlp
-import urllib.parse
 
 app = FastAPI()
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.1:5500"] for security)
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
+
 @app.get("/get-video-url")
 async def get_video_url(video_url: str):
-    video_url = urllib.parse.unquote(video_url)  # Decode the param here
     try:
         ydl_opts = {
             'format': 'best',  # Prefer best combined video+audio format
@@ -59,7 +67,6 @@ async def get_video_url(video_url: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error extracting URL: {str(e)}")
 
-# INSERT THE ROOT ROUTE HERE (new addition)
 @app.get("/")
 async def root():
     return {"message": "Welcome to Social Media Video API! Use /get-video-url?video_url=... to extract URLs."}
