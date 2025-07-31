@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware  # Add this import
 import yt_dlp
+import urllib.parse  # Added import for URL decoding
 
 app = FastAPI()
 
@@ -15,6 +16,7 @@ app.add_middleware(
 
 @app.get("/get-video-url")
 async def get_video_url(video_url: str):
+    video_url = urllib.parse.unquote(video_url)  # Added: Decode the encoded URL param
     try:
         ydl_opts = {
             'format': 'best',  # Prefer best combined video+audio format
