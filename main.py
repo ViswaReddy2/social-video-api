@@ -1,17 +1,10 @@
-from fastapi import FastAPI, HTTPException, Request  # Added Request for templates
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.templating import Jinja2Templates  # Added for templates
-from fastapi.staticfiles import StaticFiles  # Added for static CSS
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 import yt_dlp
-import urllib.parse
+import urllib.parse  # Added import for URL decoding
+import os  # Added for env vars like PROXY_URL
 
 app = FastAPI()
-
-# Mount static files (for CSS)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Set up Jinja2 templates
-templates = Jinja2Templates(directory="templates")
 
 # Add CORS middleware
 app.add_middleware(
@@ -30,8 +23,12 @@ async def get_video_url(video_url: str):
             'format': 'best',  # Prefer best combined video+audio format
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': 'cookies.txt'  # Load cookies for authentication
         }
+        # Added: Use proxy from env var for bot avoidance (set PROXY_URL on Render, e.g., http://proxy-ip:port)
+        proxy = os.getenv('PROXY_URL')
+        if proxy:
+            ydl_opts['proxy'] = proxy
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             
@@ -79,8 +76,8 @@ async def get_video_url(video_url: str):
         raise HTTPException(status_code=500, detail=f"Error extracting URL: {str(e)}")
 
 @app.get("/")
-async def root(request: Request):  # Added Request for template context
-    return templates.TemplateResponse("index.html", {"request": request})
+async def root():
+    return {"message": "Welcome to Social Media Video API! Use /get-video-url?video_url=... to extract URLs."}
 
 if __name__ == "__main__":
     import uvicorn
