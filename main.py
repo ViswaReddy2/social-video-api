@@ -2,13 +2,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware  # Add this import
 import yt_dlp
 import urllib.parse  # Added import for URL decoding
+import os  # Added for env vars (e.g., proxy)
 
 app = FastAPI()
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.1:5500"] for security)
+    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.0:5500"] for security)
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allows all headers
@@ -22,8 +23,13 @@ async def get_video_url(video_url: str):
             'format': 'best',  # Prefer best combined video+audio format
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': 'cookies.txt'  # Added: Load a combined cookies file for all platforms (Instagram, Facebook, Twitter, Pinterest, etc.)
+            'cookiefile': 'cookies.txt'  # Load a combined cookies file for all platforms (Instagram, Facebook, Twitter, Pinterest, etc.)
         }
+        # Added: Optional proxy from env var for rate limit avoidance (set on Render dashboard as PROXY_URL)
+        proxy = os.getenv('PROXY_URL')
+        if proxy:
+            ydl_opts['proxy'] = proxy  # e.g., 'http://your-proxy-ip:port'
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             
