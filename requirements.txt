@@ -1,5 +1,5 @@
 fastapi==0.111.1
 uvicorn==0.30.1
-yt-dlp==2025.8.6  # Pin to a stable version
+yt-dlp
 gunicorn==22.0.0
 jinja2
