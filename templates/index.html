@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Media Video API Home</title>
+    <link rel="stylesheet" href="/static/style.css">  <!-- Calls the CSS file -->
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to Social Media Video API</h1>
+        <div class="card">
+            <h2>About the API</h2>
+            <p>This API allows you to extract downloadable URLs for public videos and images from social media platforms like Instagram, Facebook, Twitter/X, Pinterest, and more. It's powered by yt-dlp for reliable extraction.</p>
+            <h3>How to Use</h3>
+            <ul>
+                <li>Endpoint: /get-video-url</li>
+                <li>Method: GET</li>
+                <li>Param: video_url (string, required) - The social media link (e.g., https://www.instagram.com/reel/example/)</li>
+                <li>Example: /get-video-url?video_url=https://www.instagram.com/reel/DMbsVhlTwAr/?igsh=OTh4b3U4Y3Y3a2Vu</li>
+                <li>Response: JSON with "download_url", "title", and optional "audio_url"</li>
+            </ul>
+            <p>For more details, check the source code on GitHub or contact the developer.</p>
+        </div>
+        <div class="card">
+            <h2>About Our Website</h2>
+            <p>The accompanying website is a user-friendly interface for this API. Paste a link, click download, and save videos/images directly. It's responsive for mobile and desktop, with modern UI features like previews and status updates. Visit <a href="your-website-url" style="color: #60a5fa;">our site</a> to try it out.</p>
+            <h3>Features</h3>
+            <ul>
+                <li>Supports multiple platforms</li>
+                <li>No login required for public content</li>
+                <li>High-quality downloads</li>
+                <li>Progressive Web App (PWA) support for installable app experience</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

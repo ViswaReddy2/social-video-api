@@ -1,15 +1,22 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
+from fastapi import FastAPI, HTTPException, Request  # Added Request for templates
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates  # Added for templates
+from fastapi.staticfiles import StaticFiles  # Added for static CSS
 import yt_dlp
-import urllib.parse  # Added import for URL decoding
-import os  # Added for env vars (e.g., proxy)
+import urllib.parse
 
 app = FastAPI()
+
+# Mount static files (for CSS)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Set up Jinja2 templates
+templates = Jinja2Templates(directory="templates")
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.0:5500"] for security)
+    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.1:5500"] for security)
     allow_credentials=True,
     allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
     allow_headers=["*"],  # Allows all headers
@@ -17,19 +24,14 @@ app.add_middleware(
 
 @app.get("/get-video-url")
 async def get_video_url(video_url: str):
-    video_url = urllib.parse.unquote(video_url)  # Added: Decode the encoded URL param
+    video_url = urllib.parse.unquote(video_url)  # Decode the encoded URL param
     try:
         ydl_opts = {
             'format': 'best',  # Prefer best combined video+audio format
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': 'cookies.txt'  # Load a combined cookies file for all platforms (Instagram, Facebook, Twitter, Pinterest, etc.)
+            'cookiefile': 'cookies.txt'  # Load cookies for authentication
         }
-        # Added: Optional proxy from env var for rate limit avoidance (set on Render dashboard as PROXY_URL)
-        proxy = os.getenv('PROXY_URL')
-        if proxy:
-            ydl_opts['proxy'] = proxy  # e.g., 'http://your-proxy-ip:port'
-        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             
@@ -77,8 +79,8 @@ async def get_video_url(video_url: str):
         raise HTTPException(status_code=500, detail=f"Error extracting URL: {str(e)}")
 
 @app.get("/")
-async def root():
-    return {"message": "Welcome to Social Media Video API! Use /get-video-url?video_url=... to extract URLs."}
+async def root(request: Request):  # Added Request for template context
+    return templates.TemplateResponse("index.html", {"request": request})
 
 if __name__ == "__main__":
     import uvicorn
