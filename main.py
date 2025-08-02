@@ -75,48 +75,27 @@ async def startup_event():
     asyncio.create_task(start_background_proxy_refresh())
     logging.info("🚀 API ready! Background proxy fetching started.")
 
-@app.get("/get-video-url")
-async def get_video_url(video_url: str):
+import os
+
+# Environment detection
+IS_CLOUD = bool(os.getenv('RENDER') or os.getenv('VERCEL') or os.getenv('HEROKU') or os.getenv('RAILWAY') or os.getenv('FLY_APP_NAME'))
+
+@app.get("/get-video-url-simple")
+async def get_video_url_simple(video_url: str):
+    """Simple endpoint for testing - minimal processing"""
     video_url = urllib.parse.unquote(video_url)
     
-    # Try without proxy first using advanced bypass
-    logging.info("🎯 Trying advanced bypass without proxy...")
-    info = await youtube_bypass.extract_with_retry(video_url, proxy=None, max_attempts=2)
-    
-    if info:
-        download_url = extract_video_url(info)
-        if download_url:
-            logging.info("✅ Success without proxy!")
-            return format_response(info, download_url)
-    
-    # Try with proxy using advanced bypass
-    logging.info("🔄 Trying with proxy using advanced bypass...")
-    for attempt in range(3):
-        proxy = await get_proxy_quickly()
-        if proxy:
-            logging.info(f"🌐 Using proxy for attempt {attempt + 1}")
-            info = await youtube_bypass.extract_with_retry(video_url, proxy=proxy, max_attempts=1)
-            
-            if info:
-                download_url = extract_video_url(info)
-                if download_url:
-                    logging.info("✅ Success with proxy!")
-                    return format_response(info, download_url)
-        else:
-            logging.info("⏳ No proxy available, waiting...")
-            await asyncio.sleep(2)
-    
-    # Final attempt with basic yt-dlp (fallback)
     try:
-        logging.info("🔄 Final fallback attempt...")
+        logging.info("🚀 Simple extraction attempt...")
         opts = {
-            'format': 'worst',
+            'format': 'best[height<=720]/best',
             'quiet': True,
             'no_warnings': True,
-            'socket_timeout': 30,
+            'socket_timeout': 15,
+            'retries': 1,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android'],
+                    'player_client': ['android_embedded'],
                 }
             }
         }
@@ -125,15 +104,108 @@ async def get_video_url(video_url: str):
             info = ydl.extract_info(video_url, download=False)
             download_url = extract_video_url(info)
             if download_url:
-                logging.info("✅ Success with fallback!")
+                logging.info("✅ Simple extraction success!")
+                return format_response(info, download_url)
+                
+    except Exception as e:
+        logging.error(f"❌ Simple extraction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Simple extraction failed: {str(e)[:100]}")
+
+@app.get("/get-video-url")
+async def get_video_url(video_url: str):
+    video_url = urllib.parse.unquote(video_url)
+    
+    if IS_CLOUD:
+        # Cloud platform - force proxy usage
+        logging.info("🌐 Cloud platform detected - using proxy-first strategy")
+        
+        # Try with multiple proxies first
+        for attempt in range(5):
+            proxy = await get_proxy_quickly()
+            if proxy:
+                logging.info(f"🔄 Cloud attempt {attempt + 1} with proxy")
+                info = await youtube_bypass.extract_with_retry(video_url, proxy=proxy, max_attempts=1)
+                
+                if info:
+                    download_url = extract_video_url(info)
+                    if download_url:
+                        logging.info("✅ Success with proxy on cloud!")
+                        return format_response(info, download_url)
+            else:
+                logging.info("⏳ No proxy available, waiting...")
+                await asyncio.sleep(2)
+                
+        # Fallback without proxy for cloud
+        logging.info("🔄 Cloud fallback without proxy...")
+        info = await youtube_bypass.extract_with_retry(video_url, proxy=None, max_attempts=1)
+        if info:
+            download_url = extract_video_url(info)
+            if download_url:
+                return format_response(info, download_url)
+                
+    else:
+        # Local development - try without proxy first (much faster)
+        logging.info("🏠 Local environment - trying without proxy first")
+        
+        try:
+            # Quick attempt without proxy
+            info = await youtube_bypass.extract_with_retry(video_url, proxy=None, max_attempts=1)
+            if info:
+                download_url = extract_video_url(info)
+                if download_url:
+                    logging.info("✅ Success without proxy (local)!")
+                    return format_response(info, download_url)
+        except Exception as e:
+            logging.info(f"⚠️ Local no-proxy failed: {str(e)[:50]}...")
+        
+        # Try with proxy only if no-proxy failed
+        logging.info("🔄 Local fallback with proxy...")
+        for attempt in range(2):  # Only 2 attempts for local
+            proxy = await get_proxy_quickly()
+            if proxy:
+                logging.info(f"🌐 Local proxy attempt {attempt + 1}")
+                info = await youtube_bypass.extract_with_retry(video_url, proxy=proxy, max_attempts=1)
+                
+                if info:
+                    download_url = extract_video_url(info)
+                    if download_url:
+                        logging.info("✅ Success with proxy (local)!")
+                        return format_response(info, download_url)
+            else:
+                break  # Don't wait for proxies in local development
+    
+    # Final fallback for both environments
+    try:
+        logging.info("🔄 Final basic fallback...")
+        opts = {
+            'format': 'worst/best',
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 30 if IS_CLOUD else 15,
+            'retries': 2 if IS_CLOUD else 1,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android_embedded'],
+                }
+            }
+        }
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            download_url = extract_video_url(info)
+            if download_url:
+                logging.info("✅ Basic fallback success!")
                 return format_response(info, download_url)
     except Exception as e:
-        logging.error(f"❌ Fallback failed: {str(e)[:100]}")
+        logging.error(f"❌ Final fallback failed: {str(e)[:100]}")
     
-    raise HTTPException(
-        status_code=503, 
-        detail="Video extraction failed due to anti-bot protection. The video may be geo-blocked, age-restricted, or require authentication."
-    )
+    error_msg = "Video extraction failed."
+    if IS_CLOUD:
+        error_msg += " Cloud platform IPs are often blocked by YouTube."
+    else:
+        error_msg += " Video may be geo-blocked or require authentication."
+    
+    raise HTTPException(status_code=503, detail=error_msg)
 
 def extract_video_url(info: dict) -> str:
     """Extract video URL from yt-dlp info"""
@@ -170,9 +242,15 @@ def format_response(info: dict, download_url: str) -> dict:
 
 @app.get("/")
 async def root():
+    env_type = "Cloud Platform" if IS_CLOUD else "Local Development"
     return {
         "message": "Social Media Video API",
-        "usage": "GET /get-video-url?video_url=YOUR_VIDEO_URL"
+        "environment": env_type,
+        "endpoints": {
+            "get_video": "/get-video-url?video_url=YOUR_URL",
+            "get_video_simple": "/get-video-url-simple?video_url=YOUR_URL (faster, basic extraction)"
+        },
+        "active_proxies": len(proxy_manager.working_proxies) if 'proxy_manager' in globals() else 0
     }
 
 if __name__ == "__main__":

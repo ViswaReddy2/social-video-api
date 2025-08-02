@@ -14,24 +14,43 @@ class ProxyManager:
         self.is_fetching = False
         
     async def fetch_proxies_quickly(self) -> List[str]:
-        """Fetch proxies from one fast source only"""
+        """Fetch proxies from multiple sources for cloud platforms"""
         if self.is_fetching:
             return self.working_proxies
             
         self.is_fetching = True
         try:
-            logger.info("🌐 Quick proxy fetch...")
+            logger.info("🌐 Fetching proxies for cloud deployment...")
+            all_proxies = set()
+            
+            # Multiple sources for better reliability on cloud
+            sources = [
+                "https://www.proxy-list.download/api/v1/get?type=http",
+                "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+                "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+                "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt"
+            ]
+            
             async with aiohttp.ClientSession() as session:
-                # Use only the fastest source
-                async with session.get("https://www.proxy-list.download/api/v1/get?type=http", timeout=5) as resp:
-                    if resp.status == 200:
-                        proxy_text = await resp.text()
-                        proxies = [p.strip() for p in proxy_text.splitlines() if p.strip() and ':' in p.strip()]
-                        self.all_proxies = proxies
-                        logger.info(f"📥 Got {len(proxies)} proxies")
-                        return proxies
+                for source in sources:
+                    try:
+                        async with session.get(source, timeout=10) as resp:
+                            if resp.status == 200:
+                                proxy_text = await resp.text()
+                                proxies = [p.strip() for p in proxy_text.splitlines() 
+                                         if p.strip() and ':' in p.strip() and not p.startswith('#')]
+                                all_proxies.update(proxies)
+                                logger.info(f"📥 Got {len(proxies)} proxies from source")
+                    except Exception as e:
+                        logger.warning(f"❌ Source failed: {str(e)}")
+                        continue
+            
+            self.all_proxies = list(all_proxies)
+            logger.info(f"📥 Total unique proxies collected: {len(self.all_proxies)}")
+            return self.all_proxies
+            
         except Exception as e:
-            logger.warning(f"❌ Quick fetch failed: {str(e)}")
+            logger.warning(f"❌ Proxy fetch failed: {str(e)}")
         finally:
             self.is_fetching = False
         return []
