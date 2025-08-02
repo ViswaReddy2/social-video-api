@@ -7,6 +7,7 @@ import logging
 import asyncio
 
 from proxy_utils import get_proxy_quickly, start_background_proxy_refresh
+from youtube_bypass import youtube_bypass
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
@@ -23,17 +24,46 @@ app.add_middleware(
 )
 
 def get_ydl_opts(proxy: str = None) -> dict:
-    """Get optimized yt-dlp options"""
+    """Get optimized yt-dlp options with bot detection bypass"""
     opts = {
         'format': 'best[height<=720]/best',
         'quiet': True,
         'no_warnings': True,
-        'socket_timeout': 15,
-        'retries': 0,  # No retries for faster failure
-        'fragment_retries': 0,
+        'socket_timeout': 30,
+        'retries': 1,
+        'fragment_retries': 1,
+        'extractor_retries': 1,
+        # Anti-detection headers
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+            'Accept-Encoding': 'gzip,deflate',
+            'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+            'Keep-Alive': '300',
+            'Connection': 'keep-alive',
         },
+        # YouTube-specific bypass options
+        'extract_flat': False,
+        'writethumbnail': False,
+        'writeinfojson': False,
+        'simulate': False,
+        # Additional anti-detection
+        'sleep_interval': 1,
+        'max_sleep_interval': 3,
+        'sleep_interval_requests': 1,
+        'sleep_interval_subtitles': 1,
+        # Try to avoid age gate
+        'age_limit': 99,
+        # Use cookies if available (you can add cookie file later)
+        'cookiefile': None,
+        # Additional YouTube bypasses
+        'youtube_include_dash_manifest': False,
+        'extract_args': {
+            'youtube': {
+                'skip': ['hls', 'dash']
+            }
+        }
     }
     if proxy:
         opts['proxy'] = proxy
@@ -49,55 +79,61 @@ async def startup_event():
 async def get_video_url(video_url: str):
     video_url = urllib.parse.unquote(video_url)
     
-    # Try without proxy first (fastest)
-    try:
-        logging.info("🎯 Trying without proxy first...")
-        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
-            info = ydl.extract_info(video_url, download=False)
-            download_url = extract_video_url(info)
-            if download_url:
-                logging.info("✅ Success without proxy!")
-                return format_response(info, download_url)
-    except Exception as e:
-        logging.info(f"⚠️ No proxy failed: {str(e)[:100]}...")
+    # Try without proxy first using advanced bypass
+    logging.info("🎯 Trying advanced bypass without proxy...")
+    info = await youtube_bypass.extract_with_retry(video_url, proxy=None, max_attempts=2)
     
-    # Try with proxies (up to 5 attempts)
-    for attempt in range(5):
-        try:
-            proxy = await get_proxy_quickly()
-            if not proxy:
-                logging.info(f"⏳ No proxy available for attempt {attempt + 1}, waiting...")
-                await asyncio.sleep(1)  # Wait a bit for background task to find proxies
-                continue
-                
-            logging.info(f"🔄 Attempt {attempt + 1} with proxy: {proxy}")
+    if info:
+        download_url = extract_video_url(info)
+        if download_url:
+            logging.info("✅ Success without proxy!")
+            return format_response(info, download_url)
+    
+    # Try with proxy using advanced bypass
+    logging.info("🔄 Trying with proxy using advanced bypass...")
+    for attempt in range(3):
+        proxy = await get_proxy_quickly()
+        if proxy:
+            logging.info(f"🌐 Using proxy for attempt {attempt + 1}")
+            info = await youtube_bypass.extract_with_retry(video_url, proxy=proxy, max_attempts=1)
             
-            with yt_dlp.YoutubeDL(get_ydl_opts(proxy)) as ydl:
-                info = ydl.extract_info(video_url, download=False)
+            if info:
                 download_url = extract_video_url(info)
                 if download_url:
-                    logging.info(f"✅ Success with proxy!")
+                    logging.info("✅ Success with proxy!")
                     return format_response(info, download_url)
-                    
-        except Exception as e:
-            logging.warning(f"❌ Proxy attempt {attempt + 1} failed: {str(e)[:100]}")
-            continue
+        else:
+            logging.info("⏳ No proxy available, waiting...")
+            await asyncio.sleep(2)
     
-    # Last resort: try once more without proxy with different options
+    # Final attempt with basic yt-dlp (fallback)
     try:
-        logging.info("🔄 Last resort: trying without proxy with different settings...")
-        ydl_opts = get_ydl_opts()
-        ydl_opts['format'] = 'worst'  # Try lower quality
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        logging.info("🔄 Final fallback attempt...")
+        opts = {
+            'format': 'worst',
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 30,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android'],
+                }
+            }
+        }
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             download_url = extract_video_url(info)
             if download_url:
                 logging.info("✅ Success with fallback!")
                 return format_response(info, download_url)
     except Exception as e:
-        logging.error(f"❌ Final attempt failed: {str(e)}")
+        logging.error(f"❌ Fallback failed: {str(e)[:100]}")
     
-    raise HTTPException(status_code=500, detail="Unable to extract video. The video might be geo-blocked or the URL is invalid.")
+    raise HTTPException(
+        status_code=503, 
+        detail="Video extraction failed due to anti-bot protection. The video may be geo-blocked, age-restricted, or require authentication."
+    )
 
 def extract_video_url(info: dict) -> str:
     """Extract video URL from yt-dlp info"""
