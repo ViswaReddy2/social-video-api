@@ -1,96 +1,143 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware  # Add this import
+from fastapi.middleware.cors import CORSMiddleware
 import yt_dlp
-import urllib.parse  # Added import for URL decoding
-import random  # Added for proxy rotation
+import urllib.parse
+import random
+import logging
+import asyncio
+
+from proxy_utils import get_proxy_quickly, start_background_proxy_refresh
+
+# Logging
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = FastAPI()
 
-# Add CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (change to specific like ["http://127.0.0.1:5500"] for security)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+def get_ydl_opts(proxy: str = None) -> dict:
+    """Get optimized yt-dlp options"""
+    opts = {
+        'format': 'best[height<=720]/best',
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 15,
+        'retries': 0,  # No retries for faster failure
+        'fragment_retries': 0,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+    }
+    if proxy:
+        opts['proxy'] = proxy
+    return opts
+
+@app.on_event("startup")
+async def startup_event():
+    # Start background proxy refresh - non-blocking
+    asyncio.create_task(start_background_proxy_refresh())
+    logging.info("🚀 API ready! Background proxy fetching started.")
 
 @app.get("/get-video-url")
 async def get_video_url(video_url: str):
-    video_url = urllib.parse.unquote(video_url)  # Decode the encoded URL param
-    proxies = [
-    'http://123.141.181.7:5031',
-    'http://190.97.238.74:8080',
-    'http://42.118.2.147:16000',
-    'http://114.6.27.84:8520',
-    'http://45.136.198.40:3128',
-    'http://112.216.83.10:3128',
-    'http://103.210.22.17:3128',
-    'http://27.71.228.47:3128'
-       
-    ]  # List of proxies (add more for better rotation)
-    max_retries = 3  # Number of retry attempts if proxy fails
+    video_url = urllib.parse.unquote(video_url)
     
-    for attempt in range(max_retries):
+    # Try without proxy first (fastest)
+    try:
+        logging.info("🎯 Trying without proxy first...")
+        with yt_dlp.YoutubeDL(get_ydl_opts()) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            download_url = extract_video_url(info)
+            if download_url:
+                logging.info("✅ Success without proxy!")
+                return format_response(info, download_url)
+    except Exception as e:
+        logging.info(f"⚠️ No proxy failed: {str(e)[:100]}...")
+    
+    # Try with proxies (up to 5 attempts)
+    for attempt in range(5):
         try:
-            selected_proxy = random.choice(proxies)  # Randomly select a proxy
-            ydl_opts = {
-                'format': 'best',  # Prefer best combined video+audio format
-                'quiet': True,
-                'no_warnings': True,
-                'proxy': selected_proxy  # Use the selected proxy
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            proxy = await get_proxy_quickly()
+            if not proxy:
+                logging.info(f"⏳ No proxy available for attempt {attempt + 1}, waiting...")
+                await asyncio.sleep(1)  # Wait a bit for background task to find proxies
+                continue
+                
+            logging.info(f"🔄 Attempt {attempt + 1} with proxy: {proxy}")
+            
+            with yt_dlp.YoutubeDL(get_ydl_opts(proxy)) as ydl:
                 info = ydl.extract_info(video_url, download=False)
-                
-                # Check for combined format URL
-                if 'url' in info:
-                    download_url = info['url']
-                    audio_url = None  # Combined, so no separate audio
-                elif 'requested_formats' in info and len(info['requested_formats']) > 1:
-                    # Separate video and audio detected
-                    video_format = next((f for f in info['requested_formats'] if f.get('vcodec') != 'none'), None)
-                    audio_format = next((f for f in info['requested_formats'] if f.get('acodec') != 'none'), None)
-                    download_url = video_format['url'] if video_format else None
-                    audio_url = audio_format['url'] if audio_format else None
-                elif 'formats' in info and info['formats']:
-                    # Fallback: Select best combined format
-                    valid_formats = [
-                        f for f in info['formats'] if 'url' in f 
-                        and f.get('vcodec') != 'none' 
-                        and f.get('acodec') != 'none'
-                    ]
-                    if not valid_formats:
-                        # No combined; fallback to best video-only
-                        valid_formats = [f for f in info['formats'] if 'url' in f and f.get('vcodec') != 'none']
-                        if not valid_formats:
-                            raise ValueError("No valid video formats found.")
-                    best_format = max(valid_formats, key=lambda f: (f.get('height') or 0, f.get('filesize') or 0))
-                    download_url = best_format['url']
-                    audio_url = None
-                else:
-                    raise ValueError("No video formats found.")
-                
-                response = {
-                    "download_url": download_url,
-                    "title": info.get('title', 'Untitled')
-                }
-                if audio_url:
-                    response["audio_url"] = audio_url
-                    response["note"] = "Audio is separate; merge client-side with tools like FFmpeg."
-                
-                return response
-        
-        except yt_dlp.utils.DownloadError as e:
-            if attempt == max_retries - 1:
-                raise HTTPException(status_code=400, detail=f"Invalid or unsupported URL: {str(e)}. Check if the video is public.")
-            # Retry with another proxy on failure
+                download_url = extract_video_url(info)
+                if download_url:
+                    logging.info(f"✅ Success with proxy!")
+                    return format_response(info, download_url)
+                    
+        except Exception as e:
+            logging.warning(f"❌ Proxy attempt {attempt + 1} failed: {str(e)[:100]}")
+            continue
+    
+    # Last resort: try once more without proxy with different options
+    try:
+        logging.info("🔄 Last resort: trying without proxy with different settings...")
+        ydl_opts = get_ydl_opts()
+        ydl_opts['format'] = 'worst'  # Try lower quality
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            download_url = extract_video_url(info)
+            if download_url:
+                logging.info("✅ Success with fallback!")
+                return format_response(info, download_url)
+    except Exception as e:
+        logging.error(f"❌ Final attempt failed: {str(e)}")
+    
+    raise HTTPException(status_code=500, detail="Unable to extract video. The video might be geo-blocked or the URL is invalid.")
 
-    raise HTTPException(status_code=500, detail="All proxies failed. Try later or add more proxies.")
+def extract_video_url(info: dict) -> str:
+    """Extract video URL from yt-dlp info"""
+    # Try direct URL first
+    if info.get('url'):
+        return info['url']
+    
+    # Try requested formats
+    if 'requested_formats' in info:
+        video_fmt = next((f for f in info['requested_formats'] if f.get('vcodec') != 'none'), None)
+        if video_fmt and video_fmt.get('url'):
+            return video_fmt['url']
+    
+    # Try formats list
+    if 'formats' in info:
+        valid_formats = [f for f in info['formats'] 
+                        if f.get('vcodec') != 'none' and 'url' in f and f.get('height', 0) <= 1080]
+        if valid_formats:
+            best = max(valid_formats, key=lambda f: (f.get('height', 0), f.get('tbr', 0)))
+            return best['url']
+    
+    return None
+
+def format_response(info: dict, download_url: str) -> dict:
+    """Format the API response"""
+    return {
+        "download_url": download_url,
+        "title": info.get('title', 'Untitled'),
+        "duration": info.get('duration'),
+        "view_count": info.get('view_count'),
+        "uploader": info.get('uploader'),
+        "thumbnail": info.get('thumbnail')
+    }
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to Social Media Video API! Use /get-video-url?video_url=... to extract URLs."}
+    return {
+        "message": "Social Media Video API",
+        "usage": "GET /get-video-url?video_url=YOUR_VIDEO_URL"
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -3,3 +3,5 @@ uvicorn==0.30.1
 yt-dlp
 gunicorn==22.0.0
 jinja2
+aiohttp
+APScheduler
